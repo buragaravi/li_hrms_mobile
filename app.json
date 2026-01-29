@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "li-hrms-mobile",
-    "slug": "li-hrms-mobile",
+    "slug": "li-hrms",
     "scheme": "li-hrms",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -29,7 +29,7 @@
     },
     "extra": {
       "eas": {
-        "projectId": "22373c2c-f18d-4fb6-bb6e-e7a140166995"
+        "projectId": "f466f988-d060-48b9-905e-be29d16cdf90"
       }
     }
   }
