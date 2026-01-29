@@ -5,13 +5,14 @@ import { MotiView, MotiText } from 'moti';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAuthStore } from '../src/store/useAuthStore';
 import { api } from '../src/api/client';
 
 export default function LoginScreen() {
     const router = useRouter();
     const { setAuth, isAuthenticated } = useAuthStore();
+    const hasNavigatedRef = useRef(false);
 
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -19,11 +20,18 @@ export default function LoginScreen() {
     const [isPasswordFocused, setIsPasswordFocused] = useState(false);
     const [loading, setLoading] = useState(false);
 
-    // Auto-redirect if already logged in
+    // Auto-redirect if already logged in - only after initial mount
     useEffect(() => {
-        if (isAuthenticated) {
-            router.replace('/(tabs)');
-        }
+        if (hasNavigatedRef.current) return; // Prevent multiple navigations
+        
+        const timer = setTimeout(() => {
+            if (isAuthenticated && !hasNavigatedRef.current) {
+                hasNavigatedRef.current = true;
+                router.replace('/(tabs)');
+            }
+        }, 50);
+
+        return () => clearTimeout(timer);
     }, [isAuthenticated]);
 
     const handleLogin = async () => {
