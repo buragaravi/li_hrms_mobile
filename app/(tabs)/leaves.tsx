@@ -1,6 +1,6 @@
 import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Modal, TextInput, Alert, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Calendar, Plus, Clock as ClockIcon, CheckCircle2, AlertCircle, MapPin, Briefcase, History, ChevronLeft, X } from 'lucide-react-native';
+import { Calendar, Plus, Clock as ClockIcon, CheckCircle2, AlertCircle, MapPin, Briefcase, History, ChevronLeft, X, ChevronDown } from 'lucide-react-native';
 import { MotiView, MotiText } from 'moti';
 import { useState, useEffect, useCallback } from 'react';
 import { StatusBar } from 'expo-status-bar';
@@ -8,7 +8,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { api, LeaveRequest, ODRequest, CCLRequest } from '../../src/api/client';
 import { useAuthStore } from '../../src/store/useAuthStore';
 
-type TabType = 'my' | 'pending' | 'od' | 'ccl' | 'holidays';
+type TabType = 'my' | 'od' | 'ccl' | 'holidays';
 type RequestType = 'LEAVE' | 'OD' | 'CCL';
 
 const StatusBadge = ({ status }: { status: string }) => {
@@ -27,6 +27,34 @@ const StatusBadge = ({ status }: { status: string }) => {
         <View style={{ backgroundColor: style.bg, borderColor: style.border, borderWidth: 1 }} className="px-3 py-1 rounded-full flex-row items-center">
             <Icon size={10} color={status === 'APPROVED' ? '#10B981' : status === 'REJECTED' ? '#F43F5E' : '#D97706'} strokeWidth={3} />
             <Text style={{ color: style.text }} className="text-[10px] font-black ml-1 uppercase tracking-widest">{status}</Text>
+        </View>
+    );
+};
+
+const Dropdown = ({ label, value, options, onSelect, placeholder = 'Select an option' }: { label: string, value: string, options: any[], onSelect: (val: string) => void, placeholder?: string }) => {
+    const [isOpen, setIsOpen] = useState(false);
+    return (
+        <View className="mb-4">
+            <Text className="text-neutral-400 text-[10px] font-black uppercase tracking-[2px] mb-2">{label}</Text>
+            <TouchableOpacity onPress={() => setIsOpen(!isOpen)} className="bg-neutral-50 border border-neutral-100 p-4 rounded-2xl flex-row justify-between items-center">
+                <Text className={`font-bold ${value ? 'text-neutral-900' : 'text-neutral-400'}`}>
+                    {options.find(o => o.value === value)?.label || placeholder}
+                </Text>
+                <ChevronDown size={20} color="#9CA3AF" />
+            </TouchableOpacity>
+            {isOpen && (
+                <View className="bg-white border border-neutral-100 rounded-xl mt-2 shadow-sm overflow-hidden">
+                    {options.map((option) => (
+                        <TouchableOpacity
+                            key={option.value}
+                            onPress={() => { onSelect(option.value); setIsOpen(false); }}
+                            className="p-4 border-b border-neutral-50 last:border-0"
+                        >
+                            <Text className={`font-bold ${value === option.value ? 'text-primary' : 'text-neutral-700'}`}>{option.label}</Text>
+                        </TouchableOpacity>
+                    ))}
+                </View>
+            )}
         </View>
     );
 };
@@ -63,10 +91,27 @@ export default function LeavesScreen() {
         placeVisited: '',
         purpose: '',
         date: new Date().toISOString().split('T')[0],
+        remarks: '',
     });
 
     const [verifiers, setVerifiers] = useState<any[]>([]);
     const [selectedVerifier, setSelectedVerifier] = useState<string>('');
+
+    // New State for Refined Forms
+    const [leaveTypes, setLeaveTypes] = useState<any[]>([]);
+    const [odTypes, setODTypes] = useState<any[]>([]);
+
+    // Extended Form Data
+    const [isHalfDay, setIsHalfDay] = useState(false);
+    const [halfDayType, setHalfDayType] = useState<'first_half' | 'second_half'>('first_half');
+    const [contactNumber, setContactNumber] = useState('');
+
+    const [odType, setOdType] = useState('');
+    const [odTypeExtended, setOdTypeExtended] = useState<'full_day' | 'half_day' | 'hours'>('full_day');
+    const [odStartTime, setOdStartTime] = useState('');
+    const [odEndTime, setOdEndTime] = useState('');
+
+    const [conflictMessage, setConflictMessage] = useState('');
 
     const fetchData = useCallback(async () => {
         setIsLoading(true);
@@ -83,15 +128,25 @@ export default function LeavesScreen() {
                 return;
             }
 
-            let res;
+            let res: any;
             if (activeTab === 'my') res = await api.getMyLeaves();
-            else if (activeTab === 'pending') res = await api.getPendingApprovals();
+            // else if (activeTab === 'pending') res = await api.getPendingApprovals(); // Removed
             else if (activeTab === 'od') res = await api.getMyODs();
             else if (activeTab === 'ccl') res = await api.getMyCCLRequests();
 
             // Explicitly handle null/undefined or non-array data
-            const fetchedData = res?.data;
-            setData(Array.isArray(fetchedData) ? fetchedData : []);
+            const payload = res?.data;
+            let listData: any[] = [];
+
+            if (Array.isArray(payload)) {
+                listData = payload;
+            } else if (payload && Array.isArray(payload.data)) {
+                listData = payload.data;
+            } else if (payload && Array.isArray(payload.docs)) {
+                listData = payload.docs;
+            }
+
+            setData(listData);
         } catch (error) {
             console.error('Error fetching leaves:', error);
             setData([]);
@@ -103,10 +158,69 @@ export default function LeavesScreen() {
 
     useEffect(() => {
         fetchData();
+
+        // Fetch Settings on Mount
+        const fetchSettings = async () => {
+            try {
+                const lRes = await api.getLeaveSettings('leave');
+                setLeaveTypes(lRes.data.types || [
+                    { name: 'Casual Leave', code: 'CASUAL' },
+                    { name: 'Sick Leave', code: 'SICK' }
+                ]);
+
+                const oRes = await api.getLeaveSettings('od');
+                const fetchedODTypes = (oRes.data.types && oRes.data.types.length > 0)
+                    ? oRes.data.types
+                    : [{ name: 'Official Work', code: 'OFFICIAL_WORK' }];
+                setODTypes(fetchedODTypes);
+
+                // Set default if not set
+                setOdType(prev => prev || fetchedODTypes[0]?.code);
+            } catch (e) {
+                console.log('Error fetching settings', e);
+            }
+        };
+        fetchSettings();
+
         if (isApplyModalOpen) {
-            api.getCCLVerifiers().then(res => setVerifiers(res.data)).catch(() => { });
+            api.getCCLVerifiers()
+                .then(res => {
+                    if (Array.isArray(res.data)) {
+                        setVerifiers(res.data);
+                    } else if (res.data && Array.isArray(res.data.data)) {
+                        setVerifiers(res.data.data);
+                    } else {
+                        setVerifiers([]);
+                    }
+                })
+                .catch(() => setVerifiers([]));
         }
     }, [fetchData, isApplyModalOpen]);
+
+    // Check for Conflicts
+    useEffect(() => {
+        if (requestType === 'LEAVE' && formData.startDate && formData.endDate) {
+            checkConflict(formData.startDate);
+        }
+    }, [formData.startDate, formData.endDate, requestType]);
+
+    const checkConflict = async (date: string) => {
+        if (date.length !== 10) return;
+        try {
+            // Assuming current user. In real app, might need to pass empId if applying for others.
+            const empId = employee?._id || user?.employeeRef;
+            if (!empId) return;
+
+            const res = await api.getApprovedRecordsForDate(empId, date);
+            if (res.data.hasLeave || res.data.hasOD) {
+                setConflictMessage('Warning: You already have an approved request on this date.');
+            } else {
+                setConflictMessage('');
+            }
+        } catch (e) {
+            console.log('Conflict check error', e);
+        }
+    };
 
     // real-time CCL validation
     useEffect(() => {
@@ -139,18 +253,57 @@ export default function LeavesScreen() {
             return;
         }
 
+        if (conflictMessage) {
+            Alert.alert('Conflict Warning', conflictMessage, [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Proceed Anyway', onPress: () => submitApplication() }
+            ]);
+            return;
+        }
+
+        submitApplication();
+    };
+
+    const submitApplication = async () => {
         setIsSubmitting(true);
         try {
             if (requestType === 'LEAVE') {
-                await api.applyLeave(formData);
+                // Calculate number of days
+                const start = new Date(formData.startDate);
+                const end = new Date(isHalfDay ? formData.startDate : formData.endDate);
+                const diffTime = Math.abs(end.getTime() - start.getTime());
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+
+                await api.applyLeave({
+                    employeeId: employee?._id || user?.employeeRef, // Ensure empId is passed
+                    leaveType: formData.leaveType,
+                    fromDate: formData.startDate,
+                    toDate: isHalfDay ? formData.startDate : formData.endDate,
+                    numberOfDays: isHalfDay ? 0.5 : diffDays,
+                    purpose: formData.reason, // BE expects 'purpose', map from 'reason'
+                    isHalfDay,
+                    halfDayType: isHalfDay ? halfDayType : undefined,
+                    contactNumber,
+                    remarks: formData.remarks
+                });
             } else if (requestType === 'OD') {
                 await api.applyOD({
                     date: formData.date,
                     placeVisited: formData.placeVisited,
-                    purpose: formData.purpose
+                    purpose: formData.purpose,
+                    odType: odType,
+                    odType_extended: odTypeExtended,
+                    odStartTime: odTypeExtended === 'hours' ? odStartTime : undefined,
+                    odEndTime: odTypeExtended === 'hours' ? odEndTime : undefined
                 });
             } else if (requestType === 'CCL') {
-                await api.applyCCL({ date: formData.date, verifiedBy: selectedVerifier });
+                await api.applyCCL({
+                    date: formData.date,
+                    assignedBy: selectedVerifier, // Changed from verifiedBy to assignedBy
+                    purpose: formData.purpose,
+                    isHalfDay: !!isHalfDay, // Ensure boolean
+                    halfDayType: isHalfDay ? halfDayType : undefined
+                });
             }
 
             Alert.alert('Success', `${requestType} applied successfully.`);
@@ -262,14 +415,14 @@ export default function LeavesScreen() {
 
                         {/* Tab Switcher */}
                         <View className="bg-neutral-100/50 p-1.5 rounded-[24px] flex-row mb-8">
-                            {(['my', 'pending', 'od', 'ccl', 'holidays'] as TabType[]).map((tab) => (
+                            {(['my', 'od', 'ccl', 'holidays'] as TabType[]).map((tab) => (
                                 <TouchableOpacity
                                     key={tab}
                                     onPress={() => setActiveTab(tab)}
                                     className={`px-6 py-2 rounded-full mr-2 ${activeTab === tab ? 'bg-primary' : 'bg-neutral-100'}`}
                                 >
                                     <Text className={`font-black text-[10px] uppercase tracking-widest ${activeTab === tab ? 'text-white' : 'text-neutral-500'}`}>
-                                        {tab === 'my' ? 'Leaves' : tab === 'pending' ? 'Pending' : tab === 'od' ? 'Duty' : tab === 'ccl' ? 'C-Leave' : 'Holidays'}
+                                        {tab === 'my' ? 'Leaves' : tab === 'od' ? 'Duty' : tab === 'ccl' ? 'C-Leave' : 'Holidays'}
                                     </Text>
                                 </TouchableOpacity>
                             ))}
@@ -279,7 +432,7 @@ export default function LeavesScreen() {
                         <View className="pb-20">
                             <View className="flex-row justify-between items-center mb-6">
                                 <Text className="text-neutral-900 font-black text-xl tracking-tight">
-                                    {activeTab === 'pending' ? 'Team Requests' : 'Your History'}
+                                    Your History
                                 </Text>
                                 <TouchableOpacity>
                                     <Text className="text-primary font-bold text-xs">See All</Text>
@@ -315,12 +468,12 @@ export default function LeavesScreen() {
                                             </View>
                                             <View className="flex-1">
                                                 <Text className="text-neutral-900 font-black text-lg tracking-tight">
-                                                    {activeTab === 'holidays' ? item.name : item.leaveType || item.purpose || 'C-Leave Claim'}
+                                                    {activeTab === 'holidays' ? item.name : (item.leaveType?.name || leaveTypes.find(t => t.code === item.leaveType || t === item.leaveType)?.name || item.leaveType || item.purpose || 'C-Leave Claim')}
                                                 </Text>
                                                 <Text className="text-neutral-400 text-[10px] font-black uppercase tracking-widest">
                                                     {activeTab === 'holidays'
                                                         ? new Date(item.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
-                                                        : item.emp_name || user?.name}
+                                                        : (item.emp_name || user?.name) + (item.numberOfDays ? ` • ${Math.round(item.numberOfDays * 10) / 10} Days` : '')}
                                                 </Text>
                                             </View>
                                             {activeTab !== 'holidays' && <StatusBadge status={item.status} />}
@@ -331,7 +484,9 @@ export default function LeavesScreen() {
                                                 <View className="flex-row items-center justify-between bg-neutral-50/50 p-4 rounded-2xl border border-neutral-100/50 mb-4">
                                                     <View>
                                                         <Text className="text-neutral-400 text-[10px] font-black uppercase tracking-widest mb-1">Duration</Text>
-                                                        <Text className="text-neutral-900 font-bold text-xs">{item.startDate || item.date} - {item.endDate || item.date}</Text>
+                                                        <Text className="text-neutral-900 font-bold text-xs">
+                                                            {(item.fromDate || item.startDate || item.date || '').split('T')[0]} - {(item.toDate || item.endDate || item.date || '').split('T')[0]}
+                                                        </Text>
                                                     </View>
                                                     <View className="items-end">
                                                         <Text className="text-neutral-400 text-[10px] font-black uppercase tracking-widest mb-1">Reason</Text>
@@ -339,22 +494,7 @@ export default function LeavesScreen() {
                                                     </View>
                                                 </View>
 
-                                                {activeTab === 'pending' && item.status === 'PENDING' && (
-                                                    <View className="flex-row space-x-3 mt-2">
-                                                        <TouchableOpacity
-                                                            onPress={() => handleAction(item._id, 'APPROVED')}
-                                                            className="flex-1 bg-emerald-500 py-3 rounded-xl items-center border border-emerald-600 shadow-sm"
-                                                        >
-                                                            <Text className="text-white font-black text-[10px] uppercase tracking-widest">Approve</Text>
-                                                        </TouchableOpacity>
-                                                        <TouchableOpacity
-                                                            onPress={() => handleAction(item._id, 'REJECTED')}
-                                                            className="flex-1 bg-rose-50 py-3 rounded-xl items-center border border-rose-100"
-                                                        >
-                                                            <Text className="text-rose-600 font-black text-[10px] uppercase tracking-widest">Reject</Text>
-                                                        </TouchableOpacity>
-                                                    </View>
-                                                )}
+                                                {/* Pending actions removed */}
                                             </>
                                         )}
 
@@ -411,43 +551,90 @@ export default function LeavesScreen() {
                             {requestType === 'LEAVE' && (
                                 <View className="space-y-6">
                                     <View>
-                                        <Text className="text-neutral-400 text-[10px] font-black uppercase tracking-[2px] mb-3 ml-1">Leave Type</Text>
-                                        <View className="flex-row flex-wrap gap-2">
-                                            {['CASUAL', 'SICK', 'ANNUAL', 'COMPENSATORY'].map(t => (
-                                                <TouchableOpacity
-                                                    key={t}
-                                                    onPress={() => setFormData({ ...formData, leaveType: t })}
-                                                    className={`px-4 py-2 rounded-xl border ${formData.leaveType === t ? 'bg-primary/10 border-primary' : 'bg-neutral-50 border-neutral-100'}`}
-                                                >
-                                                    <Text className={`text-[10px] font-black uppercase ${formData.leaveType === t ? 'text-primary' : 'text-neutral-400'}`}>{t}</Text>
-                                                </TouchableOpacity>
-                                            ))}
-                                        </View>
+                                        <Dropdown
+                                            label="Leave Type"
+                                            value={formData.leaveType}
+                                            options={leaveTypes.map(t => ({ label: t.name || t, value: t.code || t }))}
+                                            onSelect={(val) => setFormData({ ...formData, leaveType: val })}
+                                            placeholder="Select Leave Type"
+                                        />
                                     </View>
 
-                                    <View className="flex-row gap-4 mt-6">
-                                        <View className="flex-1">
-                                            <Text className="text-neutral-400 text-[10px] font-black uppercase tracking-[2px] mb-2">Start Date</Text>
+                                    {isHalfDay ? (
+                                        <View className="mt-2">
+                                            <Text className="text-neutral-400 text-[10px] font-black uppercase tracking-[2px] mb-2">Date</Text>
                                             <TextInput
                                                 value={formData.startDate}
-                                                onChangeText={(val) => setFormData({ ...formData, startDate: val })}
+                                                onChangeText={(val) => setFormData({ ...formData, startDate: val, endDate: val })}
                                                 placeholder="YYYY-MM-DD"
-                                                className="bg-neutral-50 border border-neutral-100 px-5 py-4 rounded-2xl font-bold text-neutral-900"
+                                                className={`bg-neutral-50 border ${conflictMessage ? 'border-rose-300 bg-rose-50' : 'border-neutral-100'} px-5 py-4 rounded-2xl font-bold text-neutral-900`}
                                             />
+                                            {conflictMessage ? <Text className="text-rose-500 text-[10px] font-bold mt-1">{conflictMessage}</Text> : null}
                                         </View>
-                                        <View className="flex-1">
-                                            <Text className="text-neutral-400 text-[10px] font-black uppercase tracking-[2px] mb-2">End Date</Text>
-                                            <TextInput
-                                                value={formData.endDate}
-                                                onChangeText={(val) => setFormData({ ...formData, endDate: val })}
-                                                placeholder="YYYY-MM-DD"
-                                                className="bg-neutral-50 border border-neutral-100 px-5 py-4 rounded-2xl font-bold text-neutral-900"
-                                            />
+                                    ) : (
+                                        <View className="flex-row gap-4 mt-2">
+                                            <View className="flex-1">
+                                                <Text className="text-neutral-400 text-[10px] font-black uppercase tracking-[2px] mb-2">Start Date</Text>
+                                                <TextInput
+                                                    value={formData.startDate}
+                                                    onChangeText={(val) => setFormData({ ...formData, startDate: val })}
+                                                    placeholder="YYYY-MM-DD"
+                                                    className={`bg-neutral-50 border ${conflictMessage ? 'border-rose-300 bg-rose-50' : 'border-neutral-100'} px-5 py-4 rounded-2xl font-bold text-neutral-900`}
+                                                />
+                                                {conflictMessage ? <Text className="text-rose-500 text-[10px] font-bold mt-1">{conflictMessage}</Text> : null}
+                                            </View>
+                                            <View className="flex-1">
+                                                <Text className="text-neutral-400 text-[10px] font-black uppercase tracking-[2px] mb-2">End Date</Text>
+                                                <TextInput
+                                                    value={formData.endDate}
+                                                    onChangeText={(val) => setFormData({ ...formData, endDate: val })}
+                                                    placeholder="YYYY-MM-DD"
+                                                    className="bg-neutral-50 border border-neutral-100 px-5 py-4 rounded-2xl font-bold text-neutral-900"
+                                                />
+                                            </View>
                                         </View>
+                                    )}
+
+                                    {/* Half Day Toggle */}
+                                    <View className="flex-row items-center justify-between bg-neutral-50 p-4 rounded-2xl border border-neutral-100">
+                                        <Text className="text-neutral-900 font-bold text-xs uppercase tracking-widest">Half Day?</Text>
+                                        <TouchableOpacity onPress={() => setIsHalfDay(!isHalfDay)}>
+                                            <View className={`w-12 h-6 rounded-full ${isHalfDay ? 'bg-primary' : 'bg-neutral-200'} justify-center px-1`}>
+                                                <View className={`w-4 h-4 bg-white rounded-full ${isHalfDay ? 'self-end' : 'self-start'}`} />
+                                            </View>
+                                        </TouchableOpacity>
                                     </View>
 
-                                    <View className="mt-6">
-                                        <Text className="text-neutral-400 text-[10px] font-black uppercase tracking-[2px] mb-2">Reason</Text>
+                                    {isHalfDay && (
+                                        <View className="flex-row gap-2">
+                                            <TouchableOpacity
+                                                onPress={() => setHalfDayType('first_half')}
+                                                className={`flex-1 py-3 items-center rounded-xl border ${halfDayType === 'first_half' ? 'bg-primary/10 border-primary' : 'bg-white border-neutral-200'}`}
+                                            >
+                                                <Text className={`text-[10px] font-bold uppercase ${halfDayType === 'first_half' ? 'text-primary' : 'text-neutral-400'}`}>First Half</Text>
+                                            </TouchableOpacity>
+                                            <TouchableOpacity
+                                                onPress={() => setHalfDayType('second_half')}
+                                                className={`flex-1 py-3 items-center rounded-xl border ${halfDayType === 'second_half' ? 'bg-primary/10 border-primary' : 'bg-white border-neutral-200'}`}
+                                            >
+                                                <Text className={`text-[10px] font-bold uppercase ${halfDayType === 'second_half' ? 'text-primary' : 'text-neutral-400'}`}>Second Half</Text>
+                                            </TouchableOpacity>
+                                        </View>
+                                    )}
+
+                                    <View className="">
+                                        <Text className="text-neutral-400 text-[10px] font-black uppercase tracking-[2px] mb-2">Contact Number</Text>
+                                        <TextInput
+                                            value={contactNumber}
+                                            onChangeText={setContactNumber}
+                                            placeholder="Emergency Contact"
+                                            keyboardType="phone-pad"
+                                            className="bg-neutral-50 border border-neutral-100 px-5 py-4 rounded-2xl font-bold text-neutral-900"
+                                        />
+                                    </View>
+
+                                    <View className="">
+                                        <Text className="text-neutral-400 text-[10px] font-black uppercase tracking-[2px] mb-2">Purpose</Text>
                                         <TextInput
                                             multiline
                                             numberOfLines={3}
@@ -457,11 +644,43 @@ export default function LeavesScreen() {
                                             className="bg-neutral-50 border border-neutral-100 px-5 py-4 rounded-2xl font-bold text-neutral-900"
                                         />
                                     </View>
+
+                                    <View className="">
+                                        <Text className="text-neutral-400 text-[10px] font-black uppercase tracking-[2px] mb-2">Remarks</Text>
+                                        <TextInput
+                                            value={formData.remarks}
+                                            onChangeText={(val) => setFormData({ ...formData, remarks: val })}
+                                            placeholder="Any additional remarks..."
+                                            className="bg-neutral-50 border border-neutral-100 px-5 py-4 rounded-2xl font-bold text-neutral-900"
+                                        />
+                                    </View>
                                 </View>
                             )}
 
                             {requestType === 'OD' && (
                                 <View className="space-y-6">
+                                    <View>
+                                        <Dropdown
+                                            label="OD Type"
+                                            value={odType}
+                                            options={odTypes.map(t => ({ label: t.name || t, value: t.code || t }))}
+                                            onSelect={setOdType}
+                                            placeholder="Select OD Type"
+                                        />
+                                    </View>
+
+                                    <View className="flex-row gap-2">
+                                        {(['full_day', 'half_day', 'hours'] as const).map(type => (
+                                            <TouchableOpacity
+                                                key={type}
+                                                onPress={() => setOdTypeExtended(type)}
+                                                className={`flex-1 py-3 items-center rounded-xl border ${odTypeExtended === type ? 'bg-primary/10 border-primary' : 'bg-white border-neutral-200'}`}
+                                            >
+                                                <Text className={`text-[10px] font-bold uppercase ${odTypeExtended === type ? 'text-primary' : 'text-neutral-400'}`}>{type.replace('_', ' ')}</Text>
+                                            </TouchableOpacity>
+                                        ))}
+                                    </View>
+
                                     <View>
                                         <Text className="text-neutral-400 text-[10px] font-black uppercase tracking-[2px] mb-2">Date</Text>
                                         <TextInput
@@ -471,7 +690,31 @@ export default function LeavesScreen() {
                                             className="bg-neutral-50 border border-neutral-100 px-5 py-4 rounded-2xl font-bold text-neutral-900"
                                         />
                                     </View>
-                                    <View className="mt-6">
+
+                                    {odTypeExtended === 'hours' && (
+                                        <View className="flex-row gap-4">
+                                            <View className="flex-1">
+                                                <Text className="text-neutral-400 text-[10px] font-black uppercase tracking-[2px] mb-2">Start Time</Text>
+                                                <TextInput
+                                                    value={odStartTime}
+                                                    onChangeText={setOdStartTime}
+                                                    placeholder="10:00"
+                                                    className="bg-neutral-50 border border-neutral-100 px-5 py-4 rounded-2xl font-bold text-neutral-900"
+                                                />
+                                            </View>
+                                            <View className="flex-1">
+                                                <Text className="text-neutral-400 text-[10px] font-black uppercase tracking-[2px] mb-2">End Time</Text>
+                                                <TextInput
+                                                    value={odEndTime}
+                                                    onChangeText={setOdEndTime}
+                                                    placeholder="12:00"
+                                                    className="bg-neutral-50 border border-neutral-100 px-5 py-4 rounded-2xl font-bold text-neutral-900"
+                                                />
+                                            </View>
+                                        </View>
+                                    )}
+
+                                    <View className="">
                                         <Text className="text-neutral-400 text-[10px] font-black uppercase tracking-[2px] mb-2">Place Visited</Text>
                                         <TextInput
                                             value={formData.placeVisited}
@@ -480,7 +723,7 @@ export default function LeavesScreen() {
                                             className="bg-neutral-50 border border-neutral-100 px-5 py-4 rounded-2xl font-bold text-neutral-900"
                                         />
                                     </View>
-                                    <View className="mt-6">
+                                    <View className="">
                                         <Text className="text-neutral-400 text-[10px] font-black uppercase tracking-[2px] mb-2">Purpose</Text>
                                         <TextInput
                                             multiline
@@ -520,19 +763,25 @@ export default function LeavesScreen() {
                                         )}
                                     </View>
                                     <View className="mt-6">
-                                        <Text className="text-neutral-400 text-[10px] font-black uppercase tracking-[2px] mb-3">Verifier (Assigned By)</Text>
-                                        <View className="flex-row flex-wrap gap-2">
-                                            {verifiers.map((v: any) => (
-                                                <TouchableOpacity
-                                                    key={v._id}
-                                                    onPress={() => setSelectedVerifier(v._id)}
-                                                    className={`px-4 py-3 rounded-2xl border ${selectedVerifier === v._id ? 'bg-primary/10 border-primary' : 'bg-neutral-50 border-neutral-100'}`}
-                                                >
-                                                    <Text className={`text-[10px] font-black uppercase ${selectedVerifier === v._id ? 'text-primary' : 'text-neutral-400'}`}>{v.name}</Text>
-                                                </TouchableOpacity>
-                                            ))}
-                                            {verifiers.length === 0 && <Text className="text-neutral-400 text-xs italic">Loading verifiers...</Text>}
-                                        </View>
+                                        <Dropdown
+                                            label="Verifier (Assigned By)"
+                                            value={selectedVerifier}
+                                            options={Array.isArray(verifiers) ? verifiers.map((v: any) => ({ label: v.name, value: v._id })) : []}
+                                            onSelect={setSelectedVerifier}
+                                            placeholder="Select a Manager"
+                                        />
+                                    </View>
+
+                                    <View className="mt-6">
+                                        <Text className="text-neutral-400 text-[10px] font-black uppercase tracking-[2px] mb-2">Purpose</Text>
+                                        <TextInput
+                                            multiline
+                                            numberOfLines={3}
+                                            value={formData.purpose}
+                                            onChangeText={(val) => setFormData({ ...formData, purpose: val })}
+                                            placeholder="Reason description"
+                                            className="bg-neutral-50 border border-neutral-100 px-5 py-4 rounded-2xl font-bold text-neutral-900"
+                                        />
                                     </View>
                                 </View>
                             )}

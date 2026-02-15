@@ -63,14 +63,21 @@ export interface LeaveRequest {
     _id: string;
     employeeId: any;
     leaveType: string;
-    startDate: string;
-    endDate: string;
-    days: number;
-    reason: string;
+    startDate?: string; // keeping for backward compat if needed, but prefer fromDate
+    endDate?: string;
+    fromDate: string;
+    toDate: string;
+    days?: number;
+    numberOfDays: number;
+    reason?: string;
+    purpose: string;
     status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED';
     appliedDate: string;
     approvedBy?: any;
     remarks?: string;
+    isHalfDay?: boolean;
+    halfDayType?: 'first_half' | 'second_half';
+    contactNumber?: string;
 }
 
 export interface ODRequest {
@@ -82,6 +89,15 @@ export interface ODRequest {
     status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED';
     appliedDate: string;
     outcome?: string;
+    odType?: string;
+    odType_extended?: 'full_day' | 'half_day' | 'hours';
+    odStartTime?: string;
+    odEndTime?: string;
+    photoEvidence?: {
+        url: string;
+        key: string;
+        exifLocation?: { lat: number; lng: number };
+    };
 }
 
 export interface CCLRequest {
@@ -91,7 +107,10 @@ export interface CCLRequest {
     holidayName?: string;
     status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED';
     appliedDate: string;
-    verifiedBy?: any;
+    assignedBy?: any; // was verifiedBy
+    isHalfDay?: boolean;
+    halfDayType?: 'first_half' | 'second_half';
+    purpose?: string;
 }
 
 export const api = {
@@ -127,6 +146,9 @@ export const api = {
     applyLeave: (data: Partial<LeaveRequest>) => apiClient.post('/leaves', data),
     takeLeaveAction: (id: string, action: 'APPROVED' | 'REJECTED', remarks?: string) =>
         apiClient.put(`/leaves/${id}/action`, { action, remarks }),
+    getApprovedRecordsForDate: (employeeId: string, date: string) =>
+        apiClient.get<{ hasLeave: boolean; hasOD: boolean; leaveInfo?: any; odInfo?: any }>('/leaves/approved-records', { params: { employeeId, date } }),
+    getLeaveSettings: (type: 'leave' | 'od') => apiClient.get<{ types: Array<{ name: string; code: string; isActive: boolean }> }>(`/leaves/settings/${type}`),
 
     // OD (On Duty)
     getMyODs: () => apiClient.get<ODRequest[]>('/leaves/od/my'),
